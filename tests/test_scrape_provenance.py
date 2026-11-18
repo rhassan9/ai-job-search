@@ -37,7 +37,7 @@ class ScrapeProvenanceSpec(unittest.TestCase):
     def test_schema_block_carries_source_field(self):
         step4 = self.steps.get("Step 4: Deduplicate & Store", "")
         self.assertIn(
-            '"source": "cli/websearch"',
+            '"source": "cli/websearch/connector/email"',
             step4,
             "the seen_jobs.json schema block lost the source (provenance) field",
         )
@@ -45,7 +45,7 @@ class ScrapeProvenanceSpec(unittest.TestCase):
     def test_source_field_is_additive_and_never_backfilled(self):
         step4 = self.steps.get("Step 4: Deduplicate & Store", "")
         self.assertIn(
-            "`cli` for Step 1b portal-CLI output, `websearch` for the Step 1c fallback",
+            "`cli` for Step 1b portal-CLI output, `websearch` for the Step 1c fallback, `connector` for Step 1d Claude-connector output",
             step4,
             "Step 4 must define which mechanism each source value names",
         )
@@ -76,6 +76,14 @@ class ScrapeProvenanceSpec(unittest.TestCase):
             " ".join(step5.split()),
             "the fallback line must be omitted when every portal ran its CLI, not printed empty",
         )
+
+    def test_connector_results_are_tagged_and_summarised(self):
+        step1 = self.steps.get("Step 1: Search", "")
+        connectors = step1.partition("#### 1d. Connector sources (Claude connectors)")[2]
+        self.assertIn('source: "connector"', connectors, "Step 1d must tag connector results for Step 4")
+        self.assertIn("untrusted third-party data", connectors, "Step 1d must carry the trust boundary")
+        step5 = self.steps.get("Step 5: Present Results", "")
+        self.assertIn("connectors unavailable:", step5, "Step 5 must name enabled connectors that could not run")
 
 
 class TestRecencyFallback(unittest.TestCase):

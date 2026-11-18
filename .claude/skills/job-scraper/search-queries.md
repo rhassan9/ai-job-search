@@ -108,12 +108,62 @@ site:[YOUR_JOB_BOARD] "technical consultant" [YOUR_DOMAIN] [YOUR_CITY]
 
 ## Location Filter
 
-When evaluating results, verify the job location is within reasonable commute distance from your home. Define acceptable areas:
+When evaluating on-site and hybrid results, verify the job location is within reasonable commute distance from your home (remote results use the Work arrangement filters below instead). Define acceptable areas:
 - [YOUR_CITY] and surrounding areas
 - [ACCEPTABLE_AREA_1]
 - [ACCEPTABLE_AREA_2]
 - [BORDERLINE_AREA] (borderline - ~X min by transit)
 - [TOO_FAR_AREA] (too far)
+
+## Work arrangement filters
+
+<!-- SETUP: filled from the Work arrangement table in 01-candidate-profile.md -->
+
+Remote scope to search: [YOUR_REMOTE_SCOPE, e.g. "worldwide + Pakistan"]
+
+When the profile accepts remote work, run each Plain term once per scope below, with the portal's own remote and location flags (read them from the portal's SKILL.md; never invent a flag). Examples for the community portals:
+
+| Scope | `linkedin-search` | `freehire-search` | `himalayas-search` | `remoteok-search` | `weworkremotely-search` |
+|---|---|---|---|---|---|
+| Remote, worldwide | `-l "Remote" --remote remote` | `--remote remote --region global` | `--worldwide --strict` | `--worldwide` | `--worldwide` |
+| Remote, open to your country | `-l "[YOUR_COUNTRY]" --remote remote` | `--remote remote --country [YOUR_ISO_CODE]` | `--country [YOUR_ISO_CODE] --strict` (add `--exclude-worldwide` to skip the worldwide roles the row above already found) | `--region "[YOUR_COUNTRY]"` (location is free text, often blank) | `--region "[YOUR_REGION, e.g. asia]"` |
+| Remote, your working hours | not supported | not supported | `--timezone [YOUR_UTC_OFFSET]` | not supported | not supported |
+| On-site or hybrid in your city | `-l "[YOUR_CITY], [YOUR_COUNTRY]"` | `--city [YOUR_CITY]` | not applicable (remote only) | not applicable | not applicable |
+
+Connectors (see **Connector sources** below) take the same scopes through their own parameters, e.g. Indeed `location: "remote"` with `country_code: [YOUR_ISO_CODE]`, or JobDataLake `remote_type: fully_remote` with `countries: [YOUR_ISO_CODE]`.
+
+A portal's remote facet tells you how the job was tagged, not who may apply. Every remote result still goes through the Remote Eligibility Gate in `04-job-evaluation.md`, and a "remote, US only" hit is skipped in Step 3 the same way a role outside commute range is.
+
+## Connector sources
+
+<!-- SETUP: list the job-search connectors on your Claude account. /scrape Step 1d runs the enabled rows. -->
+
+Claude connectors (MCP servers added to your Claude account) can search job boards that have no portal CLI. `/scrape` Step 1d runs every row below marked `yes` whose connector is available in the session. A connector is matched by the name shown in your Claude connector settings, or by its search tool's description; tool ids differ per account, so they are never written here.
+
+| Connector | Enabled | Cost | Search tool and the filters it documents |
+|---|---|---|---|
+| Indeed | yes | free | `search_jobs`: `search`, `location`, `country_code` (ISO, e.g. `PK`), `job_type`. Use it for on-site and hybrid jobs in your cities: in a 2026-11-17 test, `location: "remote"` with `country_code: PK` returned nothing while `location: "<a city in your country>"` returned 10 jobs. Links are `to.indeed.com` short links. |
+| JobDataLake | yes | free tier, 500 calls/day | `search_jobs`: `query`, `countries`, `location`, `remote_type`, `posted_within`, `skills`, `seniority`, `employment_type`, `salary_min`. Indexes employers' own ATS boards (Workday, Greenhouse, Lever, Ashby, SmartRecruiters and more), so apply links go to the employer. Run remote searches twice: `location: "Remote"` + `remote_type: fully_remote` for worldwide roles, and `countries: [YOUR_ISO_CODE]` for roles in your country. |
+| Dice | yes | free | `search_jobs`: `keyword`, `location`, `workplace_types`, `posted_date`, `employment_types`, `willing_to_sponsor`. A US tech board: its remote results are mostly US-only (they named "United States Remote" or US time zones in a 2026-11-17 test), so most will fail the Remote Eligibility Gate for a candidate based outside the US. Set to `no` if it only adds noise. |
+| Firecrawl jobs search | no | paid, credits per provider read | `jobs_search`: `query`, `location`, `remote`, `posted_within_days`, `max_credits` |
+| Upwork | no | free | `find_jobs`: freelance gigs, not employment; enable only when the profile accepts freelance work |
+
+Change `Enabled` to turn a row on or off. A paid row stays `no` unless you choose otherwise, and when on, every call passes the cost cap below.
+
+Paid connector cap per run: [YOUR_CREDIT_CAP, e.g. "50 credits"]
+
+## Email alert sources
+
+<!-- SETUP: alerts you saved on job boards that email you. /scrape Step 1e reads the enabled rows through the Gmail connector, read-only. -->
+
+When the Gmail connector is connected, `/scrape` Step 1e reads job-alert emails from the senders below (last 14 days) and treats each job in them as a search hit. It never changes your mailbox. Check a sender against a real alert in your inbox before enabling its row; boards change sender addresses.
+
+| Board | Enabled | Gmail search |
+|---|---|---|
+| LinkedIn | yes | `from:jobalerts-noreply@linkedin.com` (sender confirmed 2026-11-18) |
+| Indeed | yes | `from:alert@indeed.com` |
+| Glassdoor | no | `from:noreply@glassdoor.com subject:jobs` (the same sender also sends Community digests) |
+| Rozee.pk | no | `from:rozee.pk` |
 
 ## Language Filter
 

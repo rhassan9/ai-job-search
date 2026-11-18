@@ -29,6 +29,10 @@ This repo is a job application workspace. Claude acts as a career advisor and ap
   04-job-evaluation.md's Language Gate. -->
 - **CV language:** [YOUR_CV_LANGUAGE] <!-- English unless your market expects otherwise; /setup asks -->
 
+- **Work arrangement:** base [YOUR_COUNTRY] ([YOUR_TIMEZONE]); accepts [YOUR_WORK_MODES]; remote scope [YOUR_REMOTE_SCOPE]; hours [YOUR_WORKING_HOURS_WINDOW]; engagement [YOUR_ENGAGEMENT_TYPES]
+  <!-- Full table in 01-candidate-profile.md. Drives the Remote Eligibility Gate in
+  04-job-evaluation.md: "remote, US only" fails for a Pakistan-based candidate however good the fit. -->
+- **Target countries:** [YOUR_TARGET_COUNTRIES] <!-- with right to work and any independent route you checked: full table under Country profiles in 01-candidate-profile.md, used by the Visa & Relocation Gate -->
 - **Status:** [YOUR_EMPLOYMENT_STATUS]
 - **LinkedIn headline:** "[YOUR_LINKEDIN_HEADLINE]"
 

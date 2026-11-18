@@ -159,6 +159,16 @@ Every skill file under `.claude/skills/job-application-assistant/` opens with a 
 
 ## Identity
 
+### Work arrangement
+
+| Field | Value |
+|-------|-------|
+
+### Country profiles
+
+| Country | Interest | Right to work now | Independent route (you checked) | Notes |
+|---------|----------|-------------------|---------------------------------|-------|
+
 ### Languages
 
 | Language | Level | Notes |
@@ -171,6 +181,11 @@ Every skill file under `.claude/skills/job-application-assistant/` opens with a 
 ## Independent Projects
 
 ## Technical Skills
+
+### Skill evidence
+
+| Skill | Level | Evidence (where it shows) |
+|---|---|---|
 
 ## Publications
 

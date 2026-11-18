@@ -445,6 +445,10 @@ ai-job-search/
 
 </details>
 
+## Fork additions
+
+This fork adds remote-eligibility and visa/relocation gates, country profiles, three remote job-board plugins (Himalayas, Remote OK, We Work Remotely) and Claude connectors as a `/scrape` source. See [docs/FORK_FEATURES.md](docs/FORK_FEATURES.md) for how each works and the change log, and [docs/testing/](docs/testing/) for live test reports.
+
 ## Contributing
 
 Thinking about a PR? Read [CONTRIBUTING.md](CONTRIBUTING.md) first - it explains what gets merged, what lives in forks, and why.

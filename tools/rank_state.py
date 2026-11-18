@@ -38,6 +38,7 @@ state error, or on `apply` when any result could not be written.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -68,6 +69,116 @@ AGENT_STATUSES = ("scored", "expired", "unreachable")
 # The values the two veto gates may take (rank.md Step 2). Step 5's veto is an
 # exact match on "FAIL", so any other spelling would shortlist a deal-breaker.
 GATE_VERDICTS = ("PASS", "FAIL", "FLAG")
+
+# The Visa & Relocation Gate (04-job-evaluation.md). The verdict is a pure
+# function of the class, so the tool derives it rather than trusting the
+# agent's: an agent cannot pair `no_sponsorship` with PASS.
+VISA_GATE_BY_CLASS = {
+    "not_applicable": "PASS",
+    "sponsorship_confirmed": "PASS",
+    "relocation_and_sponsorship": "PASS",
+    "relocation_sponsorship_unclear": "FLAG",
+    "job_seeker_route": "FLAG",
+    "not_specified": "FLAG",
+    "no_sponsorship": "FAIL",
+    "work_permit_required": "FAIL",
+}
+VISA_CONFIDENCE = ("high", "medium", "low")
+# Classes whose evidence is not a statement by the employer.
+VISA_NO_QUOTE_NEEDED = ("not_specified", "job_seeker_route")
+VISA_HISTORY_MAX = 5
+
+
+def classify_visa(visa_class: str, evidence) -> tuple[str, str, dict | None]:
+    """Apply the gate's evidence rules deterministically; return (class, gate, evidence).
+
+    - `not_applicable` carries no evidence.
+    - Every class that rests on what the employer said needs a verbatim quote;
+      without one the class falls back to `not_specified` (rule 2: evidence or
+      nothing). `job_seeker_route` rests on the candidate's own recorded route,
+      so a silent posting has nothing to quote and keeps its class.
+    - A `low`-confidence quote can never produce a PASS class: relocation plus
+      sponsorship becomes `relocation_sponsorship_unclear`, confirmed
+      sponsorship becomes `not_specified`.
+    Evidence text is untrusted posting data: stored as capped plain text.
+    """
+    if visa_class == "not_applicable":
+        return visa_class, "PASS", None
+    ev = evidence if isinstance(evidence, dict) else {}
+    quote = ev.get("quote").strip()[:300] if isinstance(ev.get("quote"), str) else ""
+    source = ev.get("source").strip()[:500] if isinstance(ev.get("source"), str) else ""
+    confidence = ev.get("confidence") if ev.get("confidence") in VISA_CONFIDENCE else "low"
+    if visa_class not in VISA_NO_QUOTE_NEEDED and not quote:
+        visa_class = "not_specified"
+    if confidence == "low" and VISA_GATE_BY_CLASS[visa_class] == "PASS":
+        visa_class = "relocation_sponsorship_unclear" if visa_class == "relocation_and_sponsorship" else "not_specified"
+    record = {"quote": quote, "source": source or None, "confidence": confidence}
+    return visa_class, VISA_GATE_BY_CLASS[visa_class], record
+
+# Posting facts: the scoring agent extracts a few structured facts per
+# posting; they are normalised here and stored as `facts` for /upskill's
+# market trends. Change tracking uses posting_guard's text hash instead (see
+# cmd_apply), because extraction varies between runs.
+FACT_SKILLS_MAX = 20
+CHANGE_HISTORY_MAX = 5
+COUNTRY_CODE = re.compile(r"^[A-Za-z]{2}$")
+TEXT_HASH = re.compile(r"^[0-9a-f]{16}$")
+# One spelling per skill, so market trends count "AWS" and "Amazon Web Services"
+# once. Seen varying between scoring runs on the same posting (2026-11-18).
+SKILL_ALIASES = {k: v for v, ks in {
+    "AWS": ["amazon web services", "aws cloud"], "Amazon RDS": ["aws rds", "rds"],
+    "Amazon ECS": ["amazon elastic container service", "aws ecs", "ecs"], "Amazon S3": ["aws s3", "s3"],
+    "GCP": ["google cloud platform", "google cloud"], "BigQuery": ["google bigquery"], "Azure": ["microsoft azure"],
+    "Azure Data Factory": ["adf", "data factory"], "Azure Active Directory": ["aad", "azure ad", "microsoft entra id", "entra id"],
+    "Azure SQL": ["azure sql database"], "Azure Data Lake Storage": ["azure data lake storage gen2", "adls", "adls gen2", "azure data lake gen2"],
+    "Spark": ["apache spark"], "Airflow": ["apache airflow"], "Kafka": ["apache kafka"], "dbt": ["data build tool"],
+    "Power BI": ["powerbi", "microsoft power bi"], "Microsoft Fabric": ["fabric", "ms fabric"],
+    "MLOps": ["machine learning operations"], "Infrastructure as Code": ["iac", "infrastructure as code (iac)"],
+    "Kubernetes": ["k8s"], "PostgreSQL": ["postgres"], "Data modelling": ["data modeling"],
+    "Medallion architecture": ["medallion architecture (bronze, silver, and gold layers)", "medaillon-paradigmen"],
+}.items() for k in ks}
+
+
+def normalize_facts(facts) -> dict | None:
+    """Return the agent's facts as bounded plain values, or None when absent."""
+    if not isinstance(facts, dict):
+        return None
+    out: dict = {}
+    skills = facts.get("skills")
+    if isinstance(skills, list):
+        keep: dict[str, str] = {}
+        for skill in skills:
+            if isinstance(skill, str):
+                text = " ".join(skill.split())[:40]
+                text = SKILL_ALIASES.get(text.casefold(), text)
+                if text:
+                    keep.setdefault(text.casefold(), text)
+        out["skills"] = sorted(keep.values(), key=str.casefold)[:FACT_SKILLS_MAX]
+    country = facts.get("country")
+    if isinstance(country, str) and COUNTRY_CODE.match(country.strip()):
+        out["country"] = country.strip().upper()
+    years = facts.get("years_required")
+    if isinstance(years, (int, float)) and not isinstance(years, bool) and 0 <= years <= 40:
+        out["years_required"] = int(years) if float(years).is_integer() else round(years * 2) / 2  # "4.5+ years"
+    for field in ("salary", "remote_scope"):
+        value = facts.get(field)
+        if isinstance(value, str) and value.strip():
+            out[field] = " ".join(value.split())[:120]
+    return out
+
+
+def score_parts(scores: dict, gates) -> dict:
+    """The three-score display: technical, role fit, eligibility. Display only:
+    the overall score and the vetoes are unchanged."""
+    rest = {d: w for d, w in WEIGHTS.items() if d != "technical"}
+    role = sum(Fraction(str(scores[d])) * Fraction(str(w)) for d, w in rest.items()) / sum(
+        Fraction(str(w)) for w in rest.values()
+    )
+    present = [g for g in gates if g]
+    eligibility = "FAIL" if "FAIL" in present else "FLAG" if "FLAG" in present else "PASS"
+    return {"technical": int(Fraction(str(scores["technical"])) + Fraction(1, 2)),
+            "role_fit": int(role + Fraction(1, 2)), "eligibility": eligibility}
+
 
 # A posting that could not be fetched is `unreachable`, not `expired`, and is
 # retried on later runs (#534). It gives up to `expired` only after this many
@@ -404,12 +515,17 @@ def cmd_apply(args) -> int:
             errors.append({"key": key, "error": str(exc)})
             continue
         bad_gate = next(
-            (f for f in ("location_verdict", "language_gate") if result.get(f) and result[f] not in GATE_VERDICTS),
+            (f for f in ("location_verdict", "language_gate", "visa_gate") if result.get(f) and result[f] not in GATE_VERDICTS),
             None,
         )
         if bad_gate:
             errors.append(
                 {"key": key, "error": f"unknown {bad_gate} {result[bad_gate]!r}; expected one of {', '.join(GATE_VERDICTS)}"}
+            )
+            continue
+        if result.get("visa_class") is not None and result["visa_class"] not in VISA_GATE_BY_CLASS:
+            errors.append(
+                {"key": key, "error": f"unknown visa_class {result['visa_class']!r}; expected one of {', '.join(VISA_GATE_BY_CLASS)}"}
             )
             continue
 
@@ -428,6 +544,8 @@ def cmd_apply(args) -> int:
             )
             continue
 
+        was_expired = entry.get("status") == "expired"
+        prev_visa_class, prev_deadline = entry.get("visa_class"), entry.get("deadline")
         legacy = entry_location_verdict(entry)
         if entry.get("location") in ("PASS", "FAIL", "FLAG"):
             entry.pop("location", None)  # legacy verdict, never a place
@@ -438,16 +556,82 @@ def cmd_apply(args) -> int:
         entry["rank_verdict"] = band(score)
         entry["rank_date"] = today.isoformat()
         entry["location_verdict"] = result.get("location_verdict") or legacy or "PASS"
+        # Why a location verdict is not PASS - for a remote posting, the quoted
+        # restriction ("US residents only") next to the profile's base country.
+        # Untrusted posting text: stored as plain text, capped, never acted on.
+        location_note = result.get("location_note")
+        if entry["location_verdict"] != "PASS" and isinstance(location_note, str) and location_note.strip():
+            entry["location_note"] = location_note.strip()[:200]
+        else:
+            entry.pop("location_note", None)
         entry["language_gate"] = result.get("language_gate") or "PASS"
         if entry["language_gate"] == "PASS":
             entry.pop("language_note", None)
         else:
             entry["language_note"] = result.get("language_note")
+        # Visa & Relocation Gate. An agent on an older prompt returns no class:
+        # absence is not a correction, so stored visa fields are left alone.
+        if result.get("visa_class"):
+            visa_class, visa_gate, evidence = classify_visa(result["visa_class"], result.get("visa_evidence"))
+            if evidence is not None:
+                evidence["verified"] = today.isoformat()
+            previous = entry.get("visa_class")
+            if previous and previous != visa_class:
+                old = {"visa_class": previous, "visa_gate": entry.get("visa_gate")}
+                if isinstance(entry.get("visa_evidence"), dict):
+                    old.update(entry["visa_evidence"])
+                history = entry.get("visa_history") if isinstance(entry.get("visa_history"), list) else []
+                entry["visa_history"] = [old, *history][:VISA_HISTORY_MAX]
+            entry["visa_class"] = visa_class
+            entry["visa_gate"] = visa_gate
+            if evidence is None:
+                entry.pop("visa_evidence", None)
+            else:
+                entry["visa_evidence"] = evidence
         # Absence is not a correction: a fetch that degraded to a listing page
         # returns no deadline, and blanking a stored one would erase a real
         # date and make the entry immortal to rule 6's sweep.
         if result.get("deadline"):
             entry["deadline"] = result["deadline"]
+        # Change tracking rests on text_hash alone: posting_guard's hash of the
+        # cleaned posting text, sent only when the text came from a portal CLI
+        # or fetch_page.py (both byte-stable; WebFetch returns a model summary
+        # and sends none). Extracted facts are NOT compared: re-scoring the same
+        # 8 live postings gave identical hashes but only 50-90% skill overlap,
+        # so a facts comparison flagged every unchanged posting as edited.
+        # A new hash records `description` plus the stored fields that changed
+        # with it (deadline, visa_class), keeping the old facts as `previous`.
+        # Same hash: the stored facts are kept, so trends do not drift on noise.
+        # Absence of a hash or of facts (WebFetch, an older prompt) is not a
+        # correction and records nothing.
+        entry["last_verified"] = today.isoformat()
+        change = None
+        facts = normalize_facts(result.get("facts"))
+        text_hash = result.get("text_hash") if isinstance(result.get("text_hash"), str) and TEXT_HASH.match(result["text_hash"]) else None
+        old_hash = entry.get("text_hash")
+        old_facts = entry.get("facts") if isinstance(entry.get("facts"), dict) else None
+        if text_hash and old_hash:
+            if text_hash != old_hash:
+                fields = ["description"] + [f for f, old in (("deadline", prev_deadline), ("visa_class", prev_visa_class))
+                                            if old != entry.get(f)]
+                previous = {f: old for f, old in (("deadline", prev_deadline), ("visa_class", prev_visa_class))
+                            if f in fields}
+                if old_facts:
+                    previous["facts"] = old_facts
+                change = {"date": today.isoformat(), "basis": "text", "changed": fields, "previous": previous}
+            elif old_facts:
+                facts = None  # same text: a different extraction is noise
+        if facts is not None:
+            entry["facts"] = facts
+        if text_hash:
+            entry["text_hash"] = text_hash
+        entry.setdefault("first_verified", today.isoformat())
+        if was_expired:
+            change = change or {"date": today.isoformat(), "basis": "status", "changed": [], "previous": {}}
+            change["changed"] = ["reopened", *change["changed"]]
+        if change:
+            history = entry.get("changes") if isinstance(entry.get("changes"), list) else []
+            entry["changes"] = [change, *history][:CHANGE_HISTORY_MAX]
         for field in ("strengths", "gaps"):
             value = result.get(field)
             if isinstance(value, list):
@@ -481,14 +665,24 @@ def cmd_apply(args) -> int:
                 "score": score,
                 "verdict": entry["rank_verdict"],
                 "location_verdict": entry["location_verdict"],
+                "location_note": entry.get("location_note"),
                 "language_gate": entry["language_gate"],
                 "language_note": entry.get("language_note"),
+                "visa_gate": entry.get("visa_gate"),
+                "visa_class": entry.get("visa_class"),
+                "visa_evidence": entry.get("visa_evidence"),
                 "deadline": entry.get("deadline"),
                 "posted_date": entry.get("posted_date"),
                 "urgent": bool(parsed and today <= parsed <= today + timedelta(days=URGENT_DAYS)),
                 "strengths": entry.get("strengths", []),
                 "gaps": entry.get("gaps", []),
                 "guard": entry.get("guard"),
+                "score_parts": score_parts(
+                    result["scores"], (entry["location_verdict"], entry["language_gate"], entry.get("visa_gate"))
+                ),
+                "changed": change["changed"] if change else None,
+                "change_basis": change["basis"] if change else None,
+                "last_verified": entry["last_verified"],
             }
         )
 
@@ -496,7 +690,7 @@ def cmd_apply(args) -> int:
         save_state(args.state, doc)
 
     rows.sort(key=lambda r: (r["score"], r["urgent"]), reverse=True)
-    veto = lambda r: r["location_verdict"] == "FAIL" or r["language_gate"] == "FAIL"
+    veto = lambda r: r["location_verdict"] == "FAIL" or r["language_gate"] == "FAIL" or r["visa_gate"] == "FAIL"
     vetoed = [r for r in rows if veto(r)]
     ranked = [r for r in rows if not veto(r)]
     print(

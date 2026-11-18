@@ -144,6 +144,20 @@ class ScrapeStateTests(unittest.TestCase):
         self.assertEqual(self.run_tool("store", [good])["added"], ["fresh_builder"])
         self.assertIn("fresh_builder", json.loads(self.state.read_text(encoding="utf-8"))["seen"])
 
+    def test_store_accepts_connector_results_and_rejects_unknown_sources(self):
+        connector = {
+            "title": "Python Developer", "company": "Acme", "url": "https://to.indeed.com/abc?jk=1",
+            "first_seen": "2026-11-17", "posted_date": "2026-11-15", "deadline": None,
+            "fit": "medium", "status": "new", "portal": "connector:indeed", "source": "connector",
+        }
+        with self.assertRaisesRegex(ValueError, "invalid portal or source"):
+            self.run_tool("store", [{**connector, "source": "mcp"}])
+        self.assertFalse(self.state.exists())
+        out = self.run_tool("store", [connector])
+        self.assertEqual(len(out["added"]), 1)
+        stored = json.loads(self.state.read_text(encoding="utf-8"))["seen"][out["added"][0]]
+        self.assertEqual((stored["portal"], stored["source"]), ("connector:indeed", "connector"))
+
     def test_history_counts_portal_and_legacy_host_without_emitting_entries(self):
         self.state.parent.mkdir()
         self.state.write_text(json.dumps({"seen": {

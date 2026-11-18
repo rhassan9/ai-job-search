@@ -551,6 +551,287 @@ class Apply(RankStateCase):
         )
         self.assertNotIn("language_note", self.read_state()["a"])
 
+    def test_remote_restriction_fail_is_vetoed_with_its_note(self):
+        self.write_state({"a": entry(), "b": entry()})
+        scores = {"technical": 90, "experience": 90, "behavioral": 90, "career": 90}
+        out = self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [
+                    {"key": "a", "status": "scored", "scores": scores, "location_verdict": "FAIL",
+                     "location_note": '  "US residents only" vs base country Pakistan  '},
+                    {"key": "b", "status": "scored", "scores": scores, "location_verdict": "FLAG",
+                     "location_note": "x" * 300},
+                ]
+            ),
+        )
+        self.assertEqual([r["key"] for r in out["vetoed"]], ["a"])
+        self.assertEqual(out["vetoed"][0]["location_note"], '"US residents only" vs base country Pakistan')
+        self.assertEqual([r["key"] for r in out["ranked"]], ["b"])
+        state = self.read_state()
+        self.assertEqual(state["a"]["location_note"], '"US residents only" vs base country Pakistan')
+        self.assertEqual(len(state["b"]["location_note"]), 200)
+
+    def test_location_note_is_dropped_when_location_passes(self):
+        self.write_state({"a": entry(location_note="stale restriction from a prior run")})
+        self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [
+                    {
+                        "key": "a",
+                        "status": "scored",
+                        "scores": {"technical": 50, "experience": 50, "behavioral": 50, "career": 50},
+                        "location_verdict": "PASS",
+                        "location_note": "ignored on a PASS",
+                    }
+                ]
+            ),
+        )
+        self.assertNotIn("location_note", self.read_state()["a"])
+
+    def test_visa_fail_is_vetoed_with_dated_evidence(self):
+        self.write_state({"a": entry(), "b": entry()})
+        scores = {"technical": 90, "experience": 90, "behavioral": 90, "career": 90}
+        out = self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [
+                    {"key": "a", "status": "scored", "scores": scores, "visa_class": "no_sponsorship",
+                     "visa_evidence": {"quote": "We are unable to sponsor work visas.", "source": "https://jobs.test/a",
+                                       "confidence": "high"}},
+                    {"key": "b", "status": "scored", "scores": scores, "visa_class": "sponsorship_confirmed",
+                     "visa_gate": "PASS",
+                     "visa_evidence": {"quote": "Visa sponsorship available.", "source": "https://jobs.test/b",
+                                       "confidence": "high"}},
+                ]
+            ),
+        )
+        self.assertEqual([r["key"] for r in out["vetoed"]], ["a"])
+        self.assertEqual([r["key"] for r in out["ranked"]], ["b"])
+        state = self.read_state()
+        self.assertEqual(state["a"]["visa_gate"], "FAIL")
+        self.assertEqual(
+            state["a"]["visa_evidence"],
+            {"quote": "We are unable to sponsor work visas.", "source": "https://jobs.test/a",
+             "confidence": "high", "verified": TODAY},
+        )
+        self.assertEqual(state["b"]["visa_gate"], "PASS")
+
+    def test_visa_gate_is_derived_from_class_not_trusted_from_agent(self):
+        self.write_state({"a": entry()})
+        self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [{"key": "a", "status": "scored",
+                  "scores": {"technical": 50, "experience": 50, "behavioral": 50, "career": 50},
+                  "visa_class": "work_permit_required", "visa_gate": "PASS",
+                  "visa_evidence": {"quote": "Must hold UK right to work.", "source": "https://jobs.test/a",
+                                    "confidence": "high"}}]
+            ),
+        )
+        self.assertEqual(self.read_state()["a"]["visa_gate"], "FAIL")
+
+    def test_visa_claims_without_quote_or_on_low_confidence_are_downgraded(self):
+        self.write_state({"a": entry(), "b": entry(), "c": entry()})
+        scores = {"technical": 50, "experience": 50, "behavioral": 50, "career": 50}
+        self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [
+                    {"key": "a", "status": "scored", "scores": scores, "visa_class": "sponsorship_confirmed",
+                     "visa_evidence": {"quote": "", "source": "https://jobs.test/a", "confidence": "high"}},
+                    {"key": "b", "status": "scored", "scores": scores, "visa_class": "sponsorship_confirmed",
+                     "visa_evidence": {"quote": "Visa sponsor", "source": "https://aggregator.test/b", "confidence": "low"}},
+                    {"key": "c", "status": "scored", "scores": scores, "visa_class": "relocation_and_sponsorship",
+                     "visa_evidence": {"quote": "Relocation and visa support", "confidence": "bogus"}},
+                ]
+            ),
+        )
+        state = self.read_state()
+        self.assertEqual((state["a"]["visa_class"], state["a"]["visa_gate"]), ("not_specified", "FLAG"))
+        self.assertEqual((state["b"]["visa_class"], state["b"]["visa_gate"]), ("not_specified", "FLAG"))
+        self.assertEqual((state["c"]["visa_class"], state["c"]["visa_gate"]), ("relocation_sponsorship_unclear", "FLAG"))
+        self.assertEqual(state["c"]["visa_evidence"]["confidence"], "low")
+        self.assertIsNone(state["c"]["visa_evidence"]["source"])
+
+    def test_job_seeker_route_needs_no_employer_quote(self):
+        self.write_state({"a": entry()})
+        self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [{"key": "a", "status": "scored",
+                  "scores": {"technical": 50, "experience": 50, "behavioral": 50, "career": 50},
+                  "visa_class": "job_seeker_route",
+                  "visa_evidence": {"quote": "", "source": "Country profiles: Germany", "confidence": "medium"}}]
+            ),
+        )
+        state = self.read_state()["a"]
+        self.assertEqual((state["visa_class"], state["visa_gate"]), ("job_seeker_route", "FLAG"))
+
+    def test_changed_visa_class_keeps_the_old_evidence_in_history(self):
+        old = {"quote": "Visa sponsorship available.", "source": "https://jobs.test/a", "confidence": "high",
+               "verified": "2026-01-01"}
+        self.write_state({"a": entry(visa_class="sponsorship_confirmed", visa_gate="PASS", visa_evidence=old)})
+        self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [{"key": "a", "status": "scored",
+                  "scores": {"technical": 50, "experience": 50, "behavioral": 50, "career": 50},
+                  "visa_class": "no_sponsorship",
+                  "visa_evidence": {"quote": "We no longer sponsor visas.", "source": "https://jobs.test/a",
+                                    "confidence": "high"}}]
+            ),
+        )
+        state = self.read_state()["a"]
+        self.assertEqual(state["visa_class"], "no_sponsorship")
+        self.assertEqual(state["visa_history"], [{"visa_class": "sponsorship_confirmed", "visa_gate": "PASS", **old}])
+
+    def test_not_applicable_drops_evidence_and_absence_keeps_stored_fields(self):
+        self.write_state({"a": entry(visa_class="not_specified", visa_gate="FLAG",
+                                     visa_evidence={"quote": "", "source": None, "confidence": "low"}),
+                          "b": entry(visa_class="no_sponsorship", visa_gate="FAIL")})
+        scores = {"technical": 50, "experience": 50, "behavioral": 50, "career": 50}
+        self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [
+                    {"key": "a", "status": "scored", "scores": scores, "visa_class": "not_applicable"},
+                    {"key": "b", "status": "scored", "scores": scores},
+                ]
+            ),
+        )
+        state = self.read_state()
+        self.assertEqual((state["a"]["visa_class"], state["a"]["visa_gate"]), ("not_applicable", "PASS"))
+        self.assertNotIn("visa_evidence", state["a"])
+        self.assertEqual(state["b"]["visa_gate"], "FAIL", "a result without a visa class is not a correction")
+
+    def test_facts_are_normalised_with_aliases_and_verified_dates(self):
+        self.write_state({"a": entry()})
+        out = self.run_tool("apply", "--results", self.results([self._scored(
+            facts={"skills": ["Spark", "Apache Spark", "  Amazon Web Services ", "AWS", 7], "country": "de",
+                   "years_required": 4.5, "salary": "  EUR 60k  ", "remote_scope": "", "junk": "x"})]))
+        state = self.read_state()["a"]
+        self.assertEqual(state["facts"], {"skills": ["AWS", "Spark"], "country": "DE",
+                                          "years_required": 4.5, "salary": "EUR 60k"})
+        self.assertEqual((state["first_verified"], state["last_verified"]), (TODAY, TODAY))
+        self.assertNotIn("changes", state)
+        self.assertIsNone(out["ranked"][0]["changed"])
+
+    def test_different_facts_without_a_new_hash_are_never_an_edit(self):
+        # Live finding: re-scoring the same postings gave 50-90% skill overlap.
+        self.write_state({"a": entry()})
+        self.run_tool("apply", "--results", self.results([self._scored(facts={"skills": ["SQL"], "years_required": 4})]))
+        out = self.run_tool("apply", "--results", self.results([self._scored(facts={"skills": ["SQL", "dbt"], "years_required": 5})]))
+        self.assertIsNone(out["ranked"][0]["changed"])
+        self.assertNotIn("changes", self.read_state()["a"])
+        self.assertEqual(self.read_state()["a"]["facts"]["years_required"], 5, "no hash: newest facts stored")
+
+    def test_missing_facts_keep_stored_facts_and_reopened_is_recorded(self):
+        self.write_state({"a": entry(status="expired", facts={"skills": ["SQL"]}, text_hash="0" * 16)})
+        out = self.run_tool("apply", "--results", self.results([self._scored()]))
+        state = self.read_state()["a"]
+        self.assertEqual((state["text_hash"], state["facts"]), ("0" * 16, {"skills": ["SQL"]}))
+        self.assertEqual(state["changes"][0]["changed"], ["reopened"])
+        self.assertEqual(out["ranked"][0]["change_basis"], "status")
+
+    def test_same_text_hash_ignores_extraction_noise(self):
+        self.write_state({"a": entry()})
+        self.run_tool("apply", "--results", self.results([self._scored(text_hash="0123456789abcdef",
+                                                                     facts={"skills": ["SQL", "Python"]})]))
+        out = self.run_tool("apply", "--results", self.results([self._scored(
+            text_hash="0123456789abcdef", facts={"skills": ["SQL", "Python", "ETL"], "years_required": 3})]))
+        state = self.read_state()["a"]
+        self.assertNotIn("changes", state)
+        self.assertEqual(state["facts"], {"skills": ["Python", "SQL"]}, "same text: stored facts are kept")
+        self.assertIsNone(out["ranked"][0]["changed"])
+
+    def test_new_text_hash_is_an_edit_with_deadline_and_visa_changes_named(self):
+        self.write_state({"a": entry()})
+        facts = {"skills": ["SQL"]}
+        self.run_tool("apply", "--results", self.results([self._scored(text_hash="0" * 16, facts=facts)]))
+        out = self.run_tool("apply", "--results", self.results([self._scored(text_hash="1" * 16, facts=facts)]))
+        self.assertEqual((out["ranked"][0]["changed"], out["ranked"][0]["change_basis"]), (["description"], "text"))
+        out = self.run_tool("apply", "--results", self.results([self._scored(
+            text_hash="2" * 16, deadline="2026-12-31", facts={"skills": ["SQL", "dbt"]},
+            visa_class="no_sponsorship", visa_evidence={"quote": "We cannot sponsor.", "confidence": "high"})]))
+        row = (out["ranked"] + out["vetoed"])[0]
+        self.assertEqual(row["changed"], ["description", "deadline", "visa_class"])
+        change = self.read_state()["a"]["changes"][0]
+        self.assertEqual(change["previous"], {"deadline": None, "visa_class": None, "facts": {"skills": ["SQL"]}})
+        self.assertEqual(len(self.read_state()["a"]["changes"]), 2)
+
+    def test_hash_on_one_side_only_or_invalid_records_nothing(self):
+        self.write_state({"a": entry()})
+        self.run_tool("apply", "--results", self.results([self._scored(facts={"skills": ["SQL"]})]))  # WebFetch run
+        out = self.run_tool("apply", "--results", self.results([self._scored(text_hash="0" * 16)]))
+        self.assertIsNone(out["ranked"][0]["changed"])
+        out = self.run_tool("apply", "--results", self.results([self._scored(text_hash="not-a-hash")]))
+        self.assertIsNone(out["ranked"][0]["changed"])
+        self.assertEqual(self.read_state()["a"]["text_hash"], "0" * 16, "an invalid hash is not stored")
+
+    def test_fact_bounds_and_change_history_cap(self):
+        self.write_state({"a": entry()})
+        many = [f"skill{i:02d}" for i in range(30)] + ["x" * 80]
+        self.run_tool("apply", "--results", self.results([self._scored(
+            facts={"skills": many, "years_required": True, "country": "DEU", "salary": "s" * 300})]))
+        facts = self.read_state()["a"]["facts"]
+        self.assertEqual(len(facts["skills"]), 20)
+        self.assertNotIn("years_required", facts)
+        self.assertNotIn("country", facts)
+        self.assertEqual(len(facts["salary"]), 120)
+        for i in range(7):
+            self.run_tool("apply", "--results", self.results([self._scored(text_hash=f"{i:016x}")]))
+        self.assertEqual(len(self.read_state()["a"]["changes"]), 5)
+
+    def test_score_parts_split_technical_role_fit_and_eligibility(self):
+        self.write_state({"a": entry(), "b": entry()})
+        scores = {"technical": 90, "experience": 40, "behavioral": 70, "career": 60}
+        out = self.run_tool("apply", "--results", self.results([
+            self._scored(scores=scores),
+            self._scored(key="b", scores=scores, language_gate="FLAG"),
+        ]))
+        parts = {r["key"]: r["score_parts"] for r in out["ranked"]}
+        # role fit = (40*.25 + 70*.15 + 60*.30) / .70 = 38.5 / .70 = 55
+        self.assertEqual(parts["a"], {"technical": 90, "role_fit": 55, "eligibility": "PASS"})
+        self.assertEqual(parts["b"]["eligibility"], "FLAG")
+
+    def test_score_parts_edges(self):
+        self.write_state({"a": entry(), "b": entry(), "c": entry()})
+        out = self.run_tool("apply", "--results", self.results([
+            self._scored(scores={"technical": 0, "experience": 0, "behavioral": 0, "career": 0}),
+            self._scored(key="b", scores={"technical": 100, "experience": 100, "behavioral": 100, "career": 100}),
+            self._scored(key="c", scores={"technical": 59.5, "experience": 50, "behavioral": 50, "career": 50},
+                         visa_class="no_sponsorship", visa_evidence={"quote": "No sponsorship.", "confidence": "high"}),
+        ]))
+        rows = {r["key"]: r for r in out["ranked"] + out["vetoed"]}
+        self.assertEqual(rows["a"]["score_parts"], {"technical": 0, "role_fit": 0, "eligibility": "PASS"})
+        self.assertEqual(rows["b"]["score_parts"], {"technical": 100, "role_fit": 100, "eligibility": "PASS"})
+        self.assertEqual(rows["c"]["score_parts"], {"technical": 60, "role_fit": 50, "eligibility": "FAIL"})
+        self.assertIn("c", [r["key"] for r in out["vetoed"]])
+
+    def test_unknown_visa_class_is_an_error(self):
+        self.write_state({"a": entry()})
+        out = self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [{"key": "a", "status": "scored",
+                  "scores": {"technical": 50, "experience": 50, "behavioral": 50, "career": 50},
+                  "visa_class": "maybe"}]
+            ),
+            expect=1,
+        )
+        self.assertIn("unknown visa_class", out["errors"][0]["error"])
+
     def test_strengths_and_gaps_are_capped_and_stored_verbatim(self):
         self.write_state({"a": entry()})
         self.run_tool(

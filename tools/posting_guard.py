@@ -59,6 +59,7 @@ belongs in the session scratchpad, never next to the workflow's own files).
 """
 
 import argparse
+import hashlib
 import html
 import json
 import os
@@ -160,6 +161,13 @@ INSTRUCTION_PATTERNS = [re.compile(p, re.I) for p in (
     # object ("previous instructions"), because "forget the" and "disregard
     # the" are ordinary prose where "ignore the" already is not.
     r"\b(disregard|forget)( all| any| the| your| my)? (previous|prior|above|earlier|preceding|initial|original|system) (instructions?|prompts?)\b",
+    # "ignore your previous instructions": the possessive slips past the
+    # first pattern, so the full instruction phrase is matched explicitly.
+    r"\bignore (your|my) (previous|prior|above|earlier|preceding|initial|original|system) (instructions?|prompts?)\b",
+    # Lines aimed at the workflow's own verdicts ("mark this job as
+    # sponsorship confirmed", "classify this posting as a strong fit"). A
+    # reader-facing job ad has no reason to tell anyone how to label it.
+    r"\b(mark|classify|label|score|rate|rank) (this|the) (job|posting|role|position|vacancy|candidate|application) as\b",
     r"\byou are (?:an?|the) (?:ai(?![\w-])|ai (?:assistant|agent|model|language model)|assistant|llm|language model)\b",
     r"\bsystem prompt\b",
     # "do not tell the user", "never inform the user": the verb straight onto
@@ -552,6 +560,11 @@ def main(argv=None) -> int:
         return 2
 
     cleaned, findings = guard(raw, args.mode)
+    # A short hash of the cleaned text, whitespace-folded and case-folded, so
+    # /rank can tell an edited posting from a re-extraction of the same one
+    # (rank_state.py change tracking). Stable for portal CLI and fetch_page.py
+    # input; WebFetch returns a model summary, so its hash is not comparable.
+    findings["text_sha256"] = hashlib.sha256(" ".join(cleaned.split()).casefold().encode("utf-8")).hexdigest()[:16]
     print(findings["verdict"])
     print("--- findings ---")
     print(json.dumps(findings, ensure_ascii=False, indent=2) if args.json else _plain_findings(findings))

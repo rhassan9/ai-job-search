@@ -97,6 +97,19 @@ ALLOWED_PERMISSIONS = {
     # Reads a file or stdin, writes only to an explicit --out, never fetches.
     "Bash(python tools/posting_guard.py:*)",
     "Bash(python3 tools/posting_guard.py:*)",
+    # Fork tools: rules-based location verdicts and skill-demand counts.
+    # Both read local JSON and print; neither writes files nor fetches.
+    "Bash(python tools/eligibility.py:*)",
+    "Bash(python3 tools/eligibility.py:*)",
+    "Bash(python tools/market_trends.py:*)",
+    "Bash(python3 tools/market_trends.py:*)",
+    # Fork portal: Himalayas remote-jobs API (GET-only, himalayas.app only,
+    # zero runtime dependencies). Pre-approved for /scrape, /apply and /rank.
+    "Bash(bun run .agents/skills/himalayas-search/cli/src/cli.ts:*)",
+    # Fork portals: Remote OK JSON API and We Work Remotely RSS feeds (GET-only,
+    # their own hosts only, zero runtime dependencies).
+    "Bash(bun run .agents/skills/remoteok-search/cli/src/cli.ts:*)",
+    "Bash(bun run .agents/skills/weworkremotely-search/cli/src/cli.ts:*)",
 }
 
 # Rules that must stay in .claude/settings.json permissions.ask. An ask rule

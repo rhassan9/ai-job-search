@@ -15,6 +15,11 @@ from urllib.parse import urlsplit
 from job_key import make_key
 from rank_state import STATE, TRACKER, _force_utf8_output, load_state, norm, save_state, tracker_pairs
 
+# Which mechanism produced an entry: a portal CLI (Step 1b), the WebSearch
+# fallback (1c), a Claude connector (1d), or a job-alert email (1e). See
+# job-scraper SKILL.md Step 4.
+SOURCES = ("cli", "websearch", "connector", "email")
+
 
 def read_jobs(path: Path) -> list:
     try:
@@ -131,7 +136,7 @@ def run(args) -> int:
                 raise ValueError(f"job needs {field} before storage")
         if job["fit"] not in ("high", "medium", "low") or job["status"] not in ("new", "skipped", "expired"):
             raise ValueError("job has an invalid fit or status")
-        if job["source"] not in ("cli", "websearch") or not isinstance(job["portal"], str):
+        if job["source"] not in SOURCES or not isinstance(job["portal"], str):
             raise ValueError("job has an invalid portal or source")
         key = make_key(job["company"], job["title"], job["url"])
         if key in seen:

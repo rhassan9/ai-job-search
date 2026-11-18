@@ -19,7 +19,7 @@ allowed-tools: Read, Write, Glob, Grep, WebFetch, WebSearch
 
 ## Invocation
 
-- **`/upskill`** — aggregate mode: analyses all jobs in `job_search_tracker.csv`, merged with ranked postings (`rank_score >= 45`, no location or language veto) from `job_scraper/seen_jobs.json`
+- **`/upskill`** — aggregate mode: analyses all jobs in `job_search_tracker.csv`, merged with ranked postings (`rank_score >= 45`, no location, language or visa veto) from `job_scraper/seen_jobs.json`
 - **`/upskill <URL>`** — targeted mode: analyses a single job posting fetched from the URL
 
 ---
@@ -39,7 +39,7 @@ In targeted mode, derive a slug from the job title and company for the report fi
 1. Read `job_search_tracker.csv`. Extract all rows. The columns are:
    `date, company, sector, role, role_type, channel, status, contact_person, fit_rating, notes, cv_file, cover_letter_file, source, deadline`
 2. For each row, note the `role`, `company`, and `fit_rating`. The `fit_rating` column is a 0–100 score where 100 = perfect fit. You will use it to weight gaps — a lower fit rating means the role exposed more gaps.
-3. Read `job_scraper/seen_jobs.json`. Keep entries with `"status": "ranked"` and `rank_score >= 45` — the Moderate Fit floor from `04-job-evaluation.md` (below that, a job is Weak/Poor Fit and would otherwise dominate the heatmap with jobs the user shouldn't chase). Then drop any entry whose `location_verdict` or `language_gate` is `FAIL` — reading a legacy `PASS`/`FAIL`/`FLAG` string in `location` as the location verdict when `location_verdict` is absent, as the job-scraper schema describes. `/rank` stores a vetoed job with `"status": "ranked"` and its full score, and only its shortlist applies the veto; no learning plan turns a deal-breaker into a job the candidate can take. Count the dropped entries and report the count once in the terminal: *"N ranked jobs failed a location or language veto and were left out."* A `FLAG` stays in. A tracker row (Step 2.1) for the same job also stays in: the veto filters `/rank`'s suggestions, and a tracked application is the user's own decision to pursue the job despite it. For each kept entry, note its `title`, `company`, `rank_score`, and — when present — its recorded `gaps`. An entry with no `gaps` field (ranked before gap persistence existed) is skipped, counted, and reported once in the terminal: *"N ranked jobs were scored before gap persistence and contribute nothing; `/rank --all` re-scores them."* Never back-fill a missing `gaps` field by guessing from the title.
+3. Read `job_scraper/seen_jobs.json`. Keep entries with `"status": "ranked"` and `rank_score >= 45` — the Moderate Fit floor from `04-job-evaluation.md` (below that, a job is Weak/Poor Fit and would otherwise dominate the heatmap with jobs the user shouldn't chase). Then drop any entry whose `location_verdict`, `language_gate` or `visa_gate` is `FAIL` — reading a legacy `PASS`/`FAIL`/`FLAG` string in `location` as the location verdict when `location_verdict` is absent, as the job-scraper schema describes. `/rank` stores a vetoed job with `"status": "ranked"` and its full score, and only its shortlist applies the veto; no learning plan turns a deal-breaker into a job the candidate can take. Count the dropped entries and report the count once in the terminal: *"N ranked jobs failed a location, language or visa veto and were left out."* A `FLAG` stays in. A tracker row (Step 2.1) for the same job also stays in: the veto filters `/rank`'s suggestions, and a tracked application is the user's own decision to pursue the job despite it. For each kept entry, note its `title`, `company`, `rank_score`, and — when present — its recorded `gaps`. An entry with no `gaps` field (ranked before gap persistence existed) is skipped, counted, and reported once in the terminal: *"N ranked jobs were scored before gap persistence and contribute nothing; `/rank --all` re-scores them."* Never back-fill a missing `gaps` field by guessing from the title.
 4. Read `.claude/skills/job-application-assistant/01-candidate-profile.md` to get the candidate's current skills and experience.
 5. Check `upskill/` for the most recent aggregate report file (`report-YYYY-MM-DD.md`) — if one exists, note its date and load it for the diff in Step 8.
 
@@ -69,6 +69,8 @@ Extract the explicit required and preferred skills from the fetched posting. Eac
 ### Diff against profile
 Remove any skill from the list that is already present in the candidate profile (`01-candidate-profile.md`). Be generous — if the profile mentions a skill in any form (e.g. "Python" covers "Python scripting"), remove it.
 
+A skill the profile's **Skill evidence** table marks only `learning` (no other level listed) is not removed: it stays a gap, marked "(in progress)", because no CV may claim it yet.
+
 What remains is the **hard skill gap list**. In aggregate mode, rank by score descending. In targeted mode, list required skill gaps before preferred skill gaps, then sort alphabetically within each group.
 
 ## Step 4: Pass 2 — LLM Synthesis
@@ -85,6 +87,10 @@ Tag each synthesised gap as one of: `[domain]`, `[soft]`, `[tooling]`, or `[cred
 Do not duplicate gaps already captured in Pass 1. Only add what was missed.
 
 In targeted mode, treat all synthesised gaps as arising from a single posting. Credential gaps can still be flagged if the single posting lists them as preferred or required.
+
+## Step 4b: Market Trends (aggregate mode only)
+
+Run `python3 tools/market_trends.py` (add `--country <ISO>` when the user asked about one country). It counts the skills `/rank` stored in each scored posting's `facts`, across countries and months, vetoed jobs included (demand is demand). Use it for the report's **Market Trends** section: the top skills overall with their share of postings, the top 5 per country, and the month-over-month `movers`. Mark each top skill that is in the gap list with ⚠. When `postings` is under 10, say the sample is small; when it is 0 (no posting scored since facts were added), omit the section and say `/rank` will fill it. Never pad it with skills from memory.
 
 ## Step 5: Build Gap Heatmap
 
@@ -192,6 +198,14 @@ Assemble the full report in this order:
 
 **New gaps** (from jobs tracked since <previous date>):
 - ...
+
+---
+
+## Market Trends
+<!-- Aggregate mode only, from tools/market_trends.py. Omit when it counted 0 postings. -->
+**Top skills across N scored postings:** SQL 64% · Python 58% · Spark 41% ⚠ ...
+**By country:** DE (12): ... | IE (5): ...
+**Rising since <from_month>:** dbt +12 pts · ... **Falling:** ...
 
 ---
 

@@ -1,5 +1,5 @@
 ---
-framework_version: 1.2.7
+framework_version: 1.4.0
 ---
 
 # Job Evaluation Framework
@@ -46,6 +46,47 @@ Judge the level comparison the same way you judge everything else in this framew
 
 **Worked example:** a candidate whose Languages table lists Spanish (Native) and English (B1/B2). A posting requiring "fluent Russian" → **FAIL**, Russian isn't declared at all. A posting requiring "fluent English" → **FLAG**, English is declared but "fluent" plausibly exceeds B1/B2 — score and draft the application, but tell the candidate this posting's bar may be a stretch and let them decide. A posting requiring "conversational English" or unspecified English → **PASS**, B1/B2 clears a "conversational" bar cleanly.
 
+## Visa & Relocation Gate — run before scoring
+
+This gate answers one question the Eligibility Gate does not: **for a role whose work has to be done in a country where the candidate has no right to work today, is there a real route to that right?** It runs for every on-site or hybrid role outside the candidate's base country, and for every remote role that requires residence in such a country ("remote, must live in Germany"). For a role in the base country, or a remote role open to the base country, the class is `not_applicable` and the gate passes without a note.
+
+Read the candidate's **Country profiles** table (`01-candidate-profile.md`): for each country, whether the candidate already has the right to work there, and any independent route the candidate has recorded and checked (for example a job-seeker visa). Then classify the posting by what it **states**, never by what the employer has done before.
+
+### Classes
+
+| `visa_class` | Posting or employer says | `visa_gate` |
+|---|---|---|
+| `not_applicable` | The work is done where the candidate already has the right to work (base country, a country marked yes in Country profiles, or a remote role open to one of them) | **PASS** |
+| `sponsorship_confirmed` | Explicitly offers visa or work-permit sponsorship for this role ("visa sponsorship available", "we sponsor Blue Card applications") | **PASS** |
+| `relocation_and_sponsorship` | Explicitly offers both relocation support and visa sponsorship | **PASS** |
+| `relocation_sponsorship_unclear` | Offers relocation help (package, moving costs, "relocation support") but says nothing about the visa | **FLAG** - relocation is not sponsorship; check before drafting |
+| `job_seeker_route` | The posting is silent on visas, or excludes sponsorship, **and** the candidate has recorded an independent route for that country in Country profiles | **FLAG** - possible through the candidate's own route, not the employer; name the route |
+| `no_sponsorship` | Explicitly excludes sponsorship ("we cannot sponsor visas", "sponsorship is not available") and the candidate has no recorded route | **FAIL** - quote it |
+| `work_permit_required` | Requires existing work authorization in that country ("must already have the right to work in the UK", "EU work permit required") and the candidate has no recorded route | **FAIL** - quote it |
+| `not_specified` | Says nothing either way | **FLAG** - unverified; check the employer's own careers or international-hiring page before drafting |
+
+### Rules
+
+1. **Sponsorship, relocation and a job-seeker visa are three different things.** Relocation support pays for the move; sponsorship is the employer applying for, or backing, the work permit; a job-seeker visa is a route the candidate qualifies for independently, with no employer involved. Never let one stand in for another.
+2. **Evidence or nothing.** Every class that rests on what the employer said (`sponsorship_confirmed`, `relocation_and_sponsorship`, `relocation_sponsorship_unclear`, `no_sponsorship`, `work_permit_required`) needs a **verbatim quote** from the posting or the employer's own site. Without one, the class is `not_specified`. `job_seeker_route` rests on the candidate's recorded route instead: quote the posting's exclusion when there is one, otherwise leave the quote empty and set `source` to the Country profiles row. The quote is stored with its source and confidence (below), so a later reader can see exactly why.
+3. **Never infer sponsorship from history.** "The company sponsored someone last year", a sponsor-licence register entry, or an aggregator's "visa sponsor" badge is a lead to check, not evidence for this role. Such leads can be mentioned in the report; they never set the class.
+4. **A general statement is not role-level permission**, the same rule as the Eligibility Gate: a careers page saying "we hire internationally" followed by a named list of roles or countries counts only if this role or country is on it.
+5. **Independent routes are the candidate's facts, not the model's.** Use only routes recorded in Country profiles, and say they need the candidate's own verification against the official government source. Never decide that the candidate qualifies for a visa, and never describe a route's rules from memory.
+6. **A FAIL is reported with its quote, never silently dropped**: the candidate may know something about their status that the profile does not record.
+
+### Evidence record
+
+Every non-`not_applicable` verdict carries:
+
+| Field | Value |
+|---|---|
+| `quote` | The exact sentence, at most 300 characters; empty for `not_specified` |
+| `source` | Where the quote came from: the posting URL, or the employer's page URL |
+| `confidence` | `high`: an explicit statement in this posting or on the employer's page for this role. `medium`: the employer's own general careers or FAQ page, not specific to the role. `low`: only an aggregator's text or an indirect signal. A `low` quote can never produce a PASS class; downgrade it to `relocation_sponsorship_unclear` or `not_specified` |
+| `verified` | The date the evidence was read (`/rank` and `/apply` fill in today) |
+
+`/rank` persists the class, verdict and evidence into `job_scraper/seen_jobs.json` as `visa_class`, `visa_gate` and `visa_evidence`, and keeps the previous evidence under `visa_history` when a re-rank finds a different class, so a changed statement is never lost. A `visa_gate` FAIL vetoes the shortlist, the same as a location or language FAIL.
+
 ## Scoring Dimensions
 
 Evaluate each job posting against these five dimensions:
@@ -91,10 +132,39 @@ Does the role and company culture match the behavioral profile?
 **Red flags to research:** Department disorganization, work dominated by maintenance over development, poor chemistry with leadership, culture mismatches. Check reviews, media coverage, LinkedIn connections, and network contacts for insider perspective.
 
 ### 4. Location & Logistics (Pass/Fail + Notes)
+
+Read the candidate's **Work arrangement** block (CLAUDE.md Identity / `01-candidate-profile.md`): base country and city, time zone, accepted work modes, remote scope, working-hours window, and accepted engagement types. Then classify the posting's work mode as stated **in the posting itself** (not the portal's facet label, which is often wrong) and apply the matching rules.
+
+**On-site or hybrid:**
 - Within commute range: PASS
-- Remote with occasional office: PASS
-- Requires relocation: FAIL (deal-breaker)
+- Remote with occasional office (in commute range): PASS
+- Requires relocation: FAIL (deal-breaker), unless the profile's Work arrangement or Country profiles say the candidate is open to relocating to that country, in which case PASS on location and the Visa & Relocation Gate decides whether there is a route to the right to work there
 - Frequent international travel: FLAG (discuss with user)
+
+**Remote:** run the Remote Eligibility Gate below. Its verdict is this dimension's verdict.
+
+When the verdict is FLAG or FAIL, write a one-line `location_note` that quotes the posting's exact wording next to the profile fact it conflicts with (e.g. `"US residents only" vs base country Pakistan`). `/rank` persists it, the same way `language_note` explains a language verdict.
+
+#### Remote Eligibility Gate
+
+"Remote" in a posting almost never means "from anywhere". Most remote roles are restricted to the employer's payroll countries, a region, or a time-zone band, and the restriction is often stated once, near the bottom, or only on the employer's careers page. Read the whole posting for **where the person may live and work from**, **which hours they must cover**, and **how they would be engaged**, then classify:
+
+| Posting says | Verdict |
+|---|---|
+| Remote "worldwide", "anywhere", "work from any country", or lists the candidate's base country or a region containing it (e.g. "APAC", "EMEA", "South Asia", "Pakistan") | **PASS** on location, then check hours and engagement below |
+| Remote restricted to countries, regions, or a right-to-work that **excludes** the candidate's base country ("US only", "must reside in the EU", "UK right to work required", "Canada-based", "within LATAM"), and none of the allowed countries is in the profile's Country profiles as a target or open country | **FAIL - hard stop.** Quote the restriction. Remote scope set to `worldwide` in the profile does not override this: it describes where the candidate can work, not where the employer can hire |
+| Remote restricted to countries that exclude the base country, but **at least one allowed country is a target or open country** in Country profiles ("Remote: Estonia, Latvia, Lithuania" for a candidate targeting Estonia) | **FLAG - relocation needed.** The candidate would have to live in that country, so name it, and run the Visa & Relocation Gate for it: the visa verdict decides whether there is a route. When several target countries are allowed, use the one with the best visa class |
+| Remote with **no stated restriction**, but strong signals of a single-country hire: benefits that only exist in one country (401(k), US health insurance, a named national pension scheme), a US state-by-state pay-transparency range, "must be authorized to work in <country>", a list of eligible states or provinces | **FLAG - likely restricted.** Name the signals. Check the employer's careers page or FAQ for an eligible-country list before drafting; silence is not permission, the same rule as the Eligibility Gate |
+| Remote with no restriction and no single-country signals | **PASS, marked unverified.** Note "location scope not stated" so `/apply` checks it before drafting |
+| Remote but with a recurring on-site requirement abroad (quarterly offsites, "one week a month in Berlin") | **FLAG.** Travel and visa needs are the candidate's call |
+
+**Hours overlap** (only for a location PASS): compare any stated core hours or time-zone requirement ("must overlap 4 hours with EST", "UTC-5 to UTC+1", "Pacific hours") against the candidate's time zone and working-hours window. If the required hours fall inside the window: no change. If meeting them means working outside the window: **FLAG** and state the local hours the role would need (e.g. "EST 9-1 = 19:00-23:00 PKT"). A time-zone *band* that excludes the candidate's zone outright ("UTC-8 to UTC-3 only") is a location restriction: **FAIL**.
+
+**Engagement type** (only for a location PASS): employers hiring across borders often engage through an Employer of Record (Deel, Remote.com, Oyster and similar), as an independent contractor, or through a local entity. If the posting states an engagement the profile's accepted engagement types exclude (e.g. contractor-only when the profile accepts employment only): **FLAG**. Silence is no flag.
+
+The worst verdict across location, hours, and engagement wins: one FAIL fails the dimension, otherwise one FLAG flags it.
+
+This gate decides *where the candidate may work from*. The citizenship and permit question remains the Eligibility Gate above, which a remote role also goes through: there, "the country they are applying in" is the country the employer requires the work to be done from.
 
 ### 5. Career Alignment & Motivation (0-100)
 Does this role advance career goals and contain tasks that energize?

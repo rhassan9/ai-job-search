@@ -278,6 +278,8 @@ Ask about:
 - What languages they work in professionally, and roughly what level in each (native, fluent, conversational, a CEFR letter like B2 - whatever's natural for them to describe, doesn't need to be precise). Worth explaining why: a posting requiring a language they don't list at all gets auto-excluded later by the Language Gate, while one asking for a higher level in a language they do list gets flagged for their own judgment instead of silently passed or rejected - so it's worth being honest here rather than optimistic.
 - Current employment status
 - Family/commute constraints (if any)
+- **Work arrangement** (fills the Work arrangement table in `01-candidate-profile.md` and the one-line summary in CLAUDE.md's Identity section): time zone; which work modes they accept (on-site, hybrid, remote); for remote, the scope they want searched ("worldwide", "worldwide plus roles based in my country", a region list); the local hours they can realistically work, including whether they can cover another region's business hours; which engagement types they accept (employee of a local entity, employed through an Employer of Record such as Deel or Remote.com, independent contractor); and where, if anywhere, they would relocate. Worth explaining why: the Remote Eligibility Gate in `04-job-evaluation.md` hard-rejects a remote posting restricted to countries that exclude their base country ("remote, US only"), however strong the skills match, and flags roles whose core hours fall outside their window.
+- **Country profiles** (fills the Country profiles table in `01-candidate-profile.md` and the Target countries line in CLAUDE.md): which countries they would work in or move to, and for each one whether they have the right to work there **today** (citizen, permanent resident, a valid permit) and any independent route they have **already checked themselves** against the official government source (for example a job-seeker visa). Record a route only as the user states it, with the date they checked; never suggest that they qualify for a visa, and never describe a route's rules from memory. Worth explaining why: the Visa & Relocation Gate in `04-job-evaluation.md` fails a role abroad that excludes sponsorship or requires an existing permit, unless one of these rows gives them a route, and it never treats relocation help or a job-seeker visa as employer sponsorship.
 
 ### Section 2: Education
 For each degree:
@@ -302,6 +304,7 @@ Also ask about independent projects, freelance work, or side projects.
 - Domain expertise
 - Software tools and platforms
 - Any other technical skills
+- **Skill evidence** (fills the Skill evidence table in `01-candidate-profile.md`): for each skill they would want on a CV, the strongest evidence they have: `certified` (passed exam), `professional` (used in a paid job), `freelance` (paid client work), `portfolio` (own projects only) or `learning` (studying). Worth explaining why: `/apply` words every claim to match its level, so a portfolio-only skill is never presented as professional experience.
 
 ### Section 5: Publications & Awards (optional)
 - Peer-reviewed papers, conference presentations
@@ -340,7 +343,7 @@ Ask about:
 - **Role titles to search for:** Job titles for the same underlying work vary a lot across companies and markets - a "Data Scientist" role at one employer may be called "Insights Analyst" or "Data Consultant" at another. Ask about the function first: "What kind of work do you actually want to be doing day-to-day?" Then translate that into concrete search terms: "Given that, what job titles should I search for? For example: Data Scientist, ML Engineer, Geophysicist." Collect 3-8 specific titles, but keep the underlying function in mind - it feeds the category naming in `search-queries.md` and the Experience Match dimension in `04-job-evaluation.md`.
 - **Key skills as search terms:** "Which of your skills are most likely to appear in job postings?" Pick 3-5 that are distinctive and searchable.
 - **Target companies (optional):** "Are there specific companies you'd like to monitor for openings?"
-- **Geographic scope:** "Which cities or regions should I search in? How far are you willing to commute?" Use this to define the location filter tiers (ideal, acceptable, borderline, too far).
+- **Geographic scope:** "Which cities or regions should I search in? How far are you willing to commute?" Use this to define the location filter tiers (ideal, acceptable, borderline, too far). If Section 1's Work arrangement accepts remote work, also fill `search-queries.md`'s **Work arrangement filters** block from it: the remote scope to search (e.g. worldwide plus the base country) and each installed portal's matching remote and location flags, read from that portal's own SKILL.md.
 - **Job portals:** "AI Job Search ships no job-board CLIs. Portal skills are community-maintained at https://github.com/ai-job-search-dev/community-portals, one folder per board under `portals/<country>/` (multi-market boards such as LinkedIn under `portals/global/`). `/scrape` runs every portal skill installed under `.agents/skills/` (skipping any with `enabled: false`) and uses WebSearch for everything else. Which job boards do you use?" **Then act on the answer:** look the boards up in community-portals' `portals/` tree, and for each one that exists, print this copy prompt with its folder filled in, for the user to paste to their agent:
 
   > Copy https://github.com/ai-job-search-dev/community-portals/tree/main/portals/dk/jobindex-search into `.agents/skills/` and show me its code and what it does. Once I confirm, run `python3 tools/install_portal_clis.py` (Windows: `python tools\install_portal_clis.py`).
@@ -365,7 +368,7 @@ Once data collection is complete, generate or finish populating the following fi
 Replace all `[PLACEHOLDER]` tokens with the user's actual information. Keep the structure, workflow, and verification checklist intact.
 
 ### 2. Populate `01-candidate-profile.md` *(Path B and C; skip if Path A populated it)*
-Write the full candidate profile with structured sections: Identity (including Languages, with levels), Education, Professional Experience, Independent Projects, Technical Skills, Publications, Awards, References.
+Write the full candidate profile with structured sections: Identity (including Work arrangement, Country profiles and Languages, with levels), Education, Professional Experience, Independent Projects, Technical Skills, Publications, Awards, References.
 
 ### 3. Populate `02-behavioral-profile.md` *(Path B and C; skip if Path A populated it)*
 Write the behavioral profile based on assessment results or synthesized answers.
